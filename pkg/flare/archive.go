@@ -8,11 +8,14 @@ package flare
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"expvar"
+	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,6 +124,11 @@ func createArchive(zipFilePath string, local bool, confSearchPaths SearchPaths, 
 	err = zipHealth(tempDir, hostname)
 	if err != nil {
 		log.Errorf("Could not zip health check: %s", err)
+	}
+
+	err = zipStackTraces(tempDir, hostname)
+	if err != nil {
+		log.Errorf("Could not collect go routine stack traces: %s", err)
 	}
 
 	if config.IsContainerized() {
@@ -365,6 +373,45 @@ func zipHealth(tempDir, hostname string) error {
 	defer w.Close()
 
 	_, err = w.Write(yamlValue)
+	return err
+}
+
+func zipStackTraces(tempDir, hostname string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	pprofURL := fmt.Sprintf("http://localhost:%s/debug/pprof/goroutine?debug=2",
+		config.Datadog.GetString("expvar_port"))
+
+	defer cancel()
+
+	client := http.Client{}
+	req, err := http.NewRequest(http.MethodGet, pprofURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	f := filepath.Join(tempDir, hostname, "go-routine.dump")
+	err = ensureParentDirsExist(f)
+	if err != nil {
+		return err
+	}
+
+	w, err := NewRedactingWriter(f, os.ModePerm, true)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+
+	_, err = w.Write(body)
 	return err
 }
 
