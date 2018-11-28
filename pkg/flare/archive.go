@@ -33,6 +33,15 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
+const (
+	routineDumpFilename = "go-routine.dump"
+)
+
+var (
+	pprofURL = fmt.Sprintf("http://localhost:%s/debug/pprof/goroutine?debug=2",
+		config.Datadog.GetString("expvar_port"))
+)
+
 // SearchPaths is just an alias for a map of strings
 type SearchPaths map[string]string
 
@@ -378,9 +387,6 @@ func zipHealth(tempDir, hostname string) error {
 
 func zipStackTraces(tempDir, hostname string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	pprofURL := fmt.Sprintf("http://localhost:%s/debug/pprof/goroutine?debug=2",
-		config.Datadog.GetString("expvar_port"))
-
 	defer cancel()
 
 	client := http.Client{}
@@ -393,13 +399,14 @@ func zipStackTraces(tempDir, hostname string) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	f := filepath.Join(tempDir, hostname, "go-routine.dump")
+	f := filepath.Join(tempDir, hostname, routineDumpFilename)
 	err = ensureParentDirsExist(f)
 	if err != nil {
 		return err
